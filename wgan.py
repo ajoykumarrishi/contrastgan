@@ -21,12 +21,12 @@ data_dir = os.path.join(root_dir, '..', 'data')  # Move up one level to access d
 # Hyperparameters etc.
 device = "cuda" if torch.cuda.is_available() else "cpu"
 LEARNING_RATE = 1e-4
-BATCH_SIZE = 2
-IMAGE_SIZE = 64
+BATCH_SIZE = 1 
+IMAGE_SIZE = 64 
 CHANNELS_IMG = 1
-NUM_EPOCHS = 100
-FEATURES_CRITIC = 16
-FEATURES_GEN = 16
+NUM_EPOCHS = 500
+FEATURES_CRITIC = 8 
+FEATURES_GEN = 8 
 CRITIC_ITERATIONS = 5
 LAMBDA_GP = 10
 
@@ -157,7 +157,7 @@ for epoch in range(NUM_EPOCHS):
             step += 1
 
     # Save models and outputs periodically
-    if epoch % 10 == 0 or epoch == NUM_EPOCHS - 1:
+    if epoch % 50 == 0 or epoch == NUM_EPOCHS - 1:
         save_checkpoint({'gen': gen.state_dict(), 'disc': critic.state_dict()}, filename=f"checkpoint_epoch_{epoch}.pth.tar")
         torch.save(fake, f"output_fake_epoch_{epoch}.pt")
 
