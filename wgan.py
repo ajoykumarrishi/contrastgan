@@ -8,8 +8,9 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import os
 from glob import glob
+import nibabel as nib  # Importing nibabel for direct file handling
 from monai.data import Dataset
-from monai.transforms import LoadImage, EnsureChannelFirst, ScaleIntensity, Resize, Compose, ToTensor
+from monai.transforms import EnsureChannelFirst, ScaleIntensity, Resize, Compose, ToTensor
 from utils import gradient_penalty, save_checkpoint, load_checkpoint
 from model import Critic, Generator, initialize_weights
 
@@ -29,9 +30,36 @@ FEATURES_GEN = 16
 CRITIC_ITERATIONS = 5
 LAMBDA_GP = 10
 
+# Dataset class using nibabel directly
+class NiftiDataset(Dataset):
+    def __init__(self, data, transforms=None):
+        self.data = data
+        self.transforms = transforms
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        vnc_path = self.data[idx]["VNC"]
+        mix_path = self.data[idx]["MIX"]
+
+        # Load using nibabel
+        vnc_img = nib.load(vnc_path).get_fdata()
+        mix_img = nib.load(mix_path).get_fdata()
+
+        # Convert to PyTorch tensors
+        vnc_tensor = torch.from_numpy(vnc_img).float()
+        mix_tensor = torch.from_numpy(mix_img).float()
+
+        # Apply transforms if provided
+        if self.transforms:
+            vnc_tensor = self.transforms(vnc_tensor)
+            mix_tensor = self.transforms(mix_tensor)
+
+        return vnc_tensor, mix_tensor
+
 # Transforms for data processing
 transforms = Compose([
-    LoadImage(image_only=True, reader="NibabelReader"),
     EnsureChannelFirst(),
     ScaleIntensity(),
     Resize((IMAGE_SIZE, IMAGE_SIZE, IMAGE_SIZE)),
@@ -51,10 +79,12 @@ for case in cases:
         if os.path.exists(vnc_path) and os.path.exists(mix_path):
             train_data.append({"VNC": vnc_path, "MIX": mix_path})
             print(f"VNC path: {vnc_path}, MIX: {mix_path}")
+        else:
+            print(f"File not found: VNC or MIX in case: {case}")
     else:
         print(f"Missing VNC or MIX file in case: {case}")
 
-dataset = Dataset(train_data, transforms)
+dataset = NiftiDataset(train_data, transforms)
 loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
 
 # Initialize models
