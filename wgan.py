@@ -132,37 +132,68 @@ critic_losses = []
 gen.train()
 critic.train()
 
-# Training loop
+# Training loop with detailed print statements
 for epoch in range(NUM_EPOCHS):
+    print(f"Starting epoch {epoch+1}/{NUM_EPOCHS}")
     loop = tqdm(loader, leave=True)
     for batch_idx, (vnc, mix) in enumerate(loop):
+        print(f"\n--- Processing batch {batch_idx+1}/{len(loader)} ---")
         vnc = vnc.to(device)
         mix = mix.to(device)
         cur_batch_size = vnc.shape[0]
 
+        print(f"  Current batch size: {cur_batch_size}")
+        print(f"  VNC tensor shape: {vnc.shape}")
+        print(f"  MIX tensor shape: {mix.shape}")
+
         # Train Critic
-        for _ in range(CRITIC_ITERATIONS):
+        print("  Training the Critic...")
+        for critic_step in range(CRITIC_ITERATIONS):
+            print(f"    Critic step {critic_step+1}/{CRITIC_ITERATIONS}")
             fake = gen(vnc)
+            print(f"    Generated fake image with shape: {fake.shape}")
+            
             critic_real = critic(mix).reshape(-1)
             critic_fake = critic(fake.detach()).reshape(-1)
+            print(f"    Critic output for real data: {critic_real}")
+            print(f"    Critic output for fake data: {critic_fake}")
+
             gp = gradient_penalty(critic, mix, fake.detach(), device=device)
+            print(f"    Gradient penalty: {gp.item()}")
+
             loss_critic = -(torch.mean(critic_real) - torch.mean(critic_fake)) + LAMBDA_GP * gp
+            print(f"    Loss for Critic: {loss_critic.item()}")
+
             critic.zero_grad()
             loss_critic.backward()
+            print("    Backpropagation completed for Critic.")
             opt_critic.step()
+            print("    Critic optimizer step completed.")
 
-        # Track critic loss
+        # Track and print critic loss
         critic_losses.append(loss_critic.item())
+        print(f"  Critic loss appended: {loss_critic.item()}")
 
         # Train Generator
+        print("  Training the Generator...")
+        fake = gen(vnc)
+        print(f"  Generated new fake image for Generator training: {fake.shape}")
+
         output = critic(fake).reshape(-1)
+        print(f"  Critic output for generated data: {output}")
+
         loss_gen = -torch.mean(output)
+        print(f"  Loss for Generator: {loss_gen.item()}")
+
         gen.zero_grad()
         loss_gen.backward()
+        print("  Backpropagation completed for Generator.")
         opt_gen.step()
+        print("  Generator optimizer step completed.")
 
-        # Track generator loss
+        # Track and print generator loss
         gen_losses.append(loss_gen.item())
+        print(f"  Generator loss appended: {loss_gen.item()}")
 
         # Update progress bar
         loop.set_description(f"Epoch [{epoch+1}/{NUM_EPOCHS}]")
@@ -171,33 +202,36 @@ for epoch in range(NUM_EPOCHS):
         # Print and log progress periodically
         if batch_idx % 10 == 0:
             print(
-                f"Epoch [{epoch+1}/{NUM_EPOCHS}] Batch {batch_idx}/{len(loader)} "
+                f"  [Log] Epoch [{epoch+1}/{NUM_EPOCHS}] Batch {batch_idx}/{len(loader)} "
                 f"Loss D: {loss_critic.item():.4f}, Loss G: {loss_gen.item():.4f}"
             )
 
             with torch.no_grad():
-                # Generate fake image for visualization
+                print("  Generating visualization for TensorBoard...")
                 fake = gen(vnc[:1])
-                # Select a slice in the middle for visualization
                 slice_idx = fake.shape[2] // 2
                 real_slice = mix[0, 0, slice_idx, :, :].cpu().numpy()
                 fake_slice = fake[0, 0, slice_idx, :, :].cpu().numpy()
 
-                # Log images to TensorBoard
+                print(f"  Selected middle slice index for visualization: {slice_idx}")
                 writer_real.add_image("Real", real_slice, global_step=step, dataformats='HW')
                 writer_fake.add_image("Fake", fake_slice, global_step=step, dataformats='HW')
+                print("  Visualization added to TensorBoard.")
 
             step += 1
 
     # Save models and outputs periodically
     if epoch % 50 == 0 or epoch == NUM_EPOCHS - 1:
+        print(f"Saving model checkpoint and generated outputs at epoch {epoch+1}")
         save_checkpoint(
             {'gen': gen.state_dict(), 'disc': critic.state_dict()},
             filename=f"checkpoint_epoch_{epoch+1}.pth.tar"
         )
         torch.save(fake, f"output_fake_epoch_{epoch+1}.pt")
+        print(f"  Model checkpoint saved as 'checkpoint_epoch_{epoch+1}.pth.tar'")
 
 # Plot and save loss curves
+print("Plotting and saving loss curves...")
 plt.figure()
 plt.plot(gen_losses, label="Generator Loss")
 plt.plot(critic_losses, label="Critic Loss")
@@ -206,3 +240,4 @@ plt.ylabel("Loss")
 plt.legend()
 plt.savefig("loss_curves.png")
 plt.close()
+print("Loss curves saved as 'loss_curves.png'")
