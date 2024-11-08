@@ -51,7 +51,7 @@ dataset = Dataset(train_data, transforms)
 loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
 
 # Initialize models
-gen = Generator(CHANNELS_IMG, CHANNELS_IMG, FEATURES_GEN).to(device)
+gen = Generator(CHANNELS_IMG, FEATURES_GEN).to(device)
 critic = Critic(CHANNELS_IMG, FEATURES_CRITIC).to(device)
 initialize_weights(gen)
 initialize_weights(critic)
