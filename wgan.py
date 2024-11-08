@@ -10,7 +10,7 @@ import os
 from glob import glob
 import nibabel as nib  # Importing nibabel for direct file handling
 from monai.data import Dataset
-from monai.transforms import EnsureChannelFirst, ScaleIntensity, Resize, Compose, ToTensor
+from monai.transforms import ScaleIntensity, Resize, Compose, ToTensor
 from utils import gradient_penalty, save_checkpoint, load_checkpoint
 from model import Critic, Generator, initialize_weights
 
@@ -30,7 +30,7 @@ FEATURES_GEN = 16
 CRITIC_ITERATIONS = 5
 LAMBDA_GP = 10
 
-# Dataset class using nibabel directly
+# Custom Dataset class using nibabel directly
 class NiftiDataset(Dataset):
     def __init__(self, data, transforms=None):
         self.data = data
@@ -47,9 +47,9 @@ class NiftiDataset(Dataset):
         vnc_img = nib.load(vnc_path).get_fdata()
         mix_img = nib.load(mix_path).get_fdata()
 
-        # Convert to PyTorch tensors
-        vnc_tensor = torch.from_numpy(vnc_img).float()
-        mix_tensor = torch.from_numpy(mix_img).float()
+        # Convert to PyTorch tensors and add a channel dimension
+        vnc_tensor = torch.from_numpy(vnc_img).unsqueeze(0).float()  # Add channel dim
+        mix_tensor = torch.from_numpy(mix_img).unsqueeze(0).float()  # Add channel dim
 
         # Apply transforms if provided
         if self.transforms:
@@ -60,7 +60,6 @@ class NiftiDataset(Dataset):
 
 # Transforms for data processing
 transforms = Compose([
-    EnsureChannelFirst(),
     ScaleIntensity(),
     Resize((IMAGE_SIZE, IMAGE_SIZE, IMAGE_SIZE)),
     ToTensor(),
