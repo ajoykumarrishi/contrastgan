@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import os
 from glob import glob
 from monai.data import Dataset
-from monai.transforms import LoadImage, AddChannel, ScaleIntensity, Resize, Compose, ToTensor
+from monai.transforms import LoadImage, EnsureChannelFirst, ScaleIntensity, Resize, Compose, ToTensor
 from utils import gradient_penalty, save_checkpoint, load_checkpoint
 from model import Critic, Generator, initialize_weights
 
@@ -32,7 +32,7 @@ LAMBDA_GP = 10
 # Transforms for data processing
 transforms = Compose([
     LoadImage(image_only=True),
-    AddChannel(),
+    EnsureChannelFirst(),
     ScaleIntensity(),
     Resize((IMAGE_SIZE, IMAGE_SIZE, IMAGE_SIZE)),
     ToTensor(),
