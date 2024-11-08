@@ -22,11 +22,11 @@ data_dir = os.path.join(root_dir, '..', 'data')  # Move up one level to access d
 device = "cuda" if torch.cuda.is_available() else "cpu"
 LEARNING_RATE = 1e-4
 BATCH_SIZE = 1 
-IMAGE_SIZE = 64 
+IMAGE_SIZE = 16
 CHANNELS_IMG = 1
 NUM_EPOCHS = 500
-FEATURES_CRITIC = 8 
-FEATURES_GEN = 8 
+FEATURES_CRITIC = 16
+FEATURES_GEN = 16
 CRITIC_ITERATIONS = 5
 LAMBDA_GP = 10
 
@@ -73,7 +73,7 @@ for case in cases:
     mix_paths = glob(os.path.join(case, "*_MIX.nii.gz"))
     
     if vnc_paths and mix_paths:
-        vnc_path = vnc_paths[0]  # Safely access the first result
+        vnc_path = vnc_paths[0]
         mix_path = mix_paths[0]
         if os.path.exists(vnc_path) and os.path.exists(mix_path):
             train_data.append({"VNC": vnc_path, "MIX": mix_path})
@@ -84,7 +84,7 @@ for case in cases:
         print(f"Missing VNC or MIX file in case: {case}")
 
 dataset = NiftiDataset(train_data, transforms)
-loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)  # Added num_workers for better data loading
 
 # Initialize models
 gen = Generator(CHANNELS_IMG, FEATURES_GEN).to(device)
