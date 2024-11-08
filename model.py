@@ -73,12 +73,12 @@ class Generator(nn.Module):
             features_g (int): Base number of features in the Generator.
         """
         super(Generator, self).__init__()
-        # Define the 3D U-Net architecture from MONAI
+        # Adjusted channels and strides to satisfy len(strides) == len(channels) - 1
         self.unet = UNet(
             spatial_dims=3,
             in_channels=channels_img,
             out_channels=channels_img,
-            channels=(features_g, features_g * 2, features_g * 4, features_g * 8),
+            channels=(features_g, features_g * 2, features_g * 4, features_g * 8, features_g * 16),
             strides=(2, 2, 2, 2),
             num_res_units=2,
             act=Act.PRELU,
@@ -107,7 +107,12 @@ def initialize_weights(model):
     """
     for m in model.modules():
         if isinstance(m, (nn.Conv3d, nn.ConvTranspose3d)):
-            nn.init.normal_(m.weight.data, 0.0, 0.02)
+            if m.weight is not None:
+                nn.init.normal_(m.weight.data, 0.0, 0.02)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias.data)
         elif isinstance(m, (nn.InstanceNorm3d, nn.BatchNorm3d)):
-            nn.init.constant_(m.weight.data, 1.0)
-            nn.init.constant_(m.bias.data, 0)
+            if m.weight is not None:
+                nn.init.constant_(m.weight.data, 1.0)
+            if m.bias is not None:
+                nn.init.constant_(m.bias.data, 0)
