@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import os
 from glob import glob
 import nibabel as nib
-from monai.transforms import Compose, ScaleIntensity, Resize, EnsureChannelFirst
+from monai.transforms import Compose, ScaleIntensity, Resize, AddChannel
 from utils import gradient_penalty, save_checkpoint, load_checkpoint
 from model import Critic, Generator, initialize_weights
 
@@ -54,7 +54,7 @@ class NiftiDataset(torch.utils.data.Dataset):
             vnc_img = self.transforms(vnc_img)
             mix_img = self.transforms(mix_img)
 
-        # After transforms, images are MetaTensors with shape (C, D, H, W)
+        # After transforms, images are PyTorch tensors with shape (1, D, H, W)
         # Ensure they are float tensors
         vnc_tensor = vnc_img.float()
         mix_tensor = mix_img.float()
@@ -63,8 +63,8 @@ class NiftiDataset(torch.utils.data.Dataset):
 
 # Transforms for data processing
 transforms = Compose([
-    EnsureChannelFirst(),  # Adds channel dimension as the first dimension
-    ScaleIntensity(),      # Scales intensity to [0, 1]
+    AddChannel(),         # Adds a new channel dimension as the first dimension
+    ScaleIntensity(),     # Scales intensity values to [0, 1]
     Resize((IMAGE_SIZE, IMAGE_SIZE, IMAGE_SIZE)),  # Resize to desired dimensions
 ])
 
