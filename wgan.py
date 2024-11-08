@@ -31,7 +31,7 @@ LAMBDA_GP = 10
 
 # Transforms for data processing
 transforms = Compose([
-    LoadImage(image_only=True, reader="NiababelReader"),
+    LoadImage(image_only=True, reader="NibabelReader"),
     EnsureChannelFirst(),
     ScaleIntensity(),
     Resize((IMAGE_SIZE, IMAGE_SIZE, IMAGE_SIZE)),
