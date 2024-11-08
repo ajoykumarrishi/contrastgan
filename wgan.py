@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torchvision
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
@@ -9,7 +8,7 @@ import matplotlib.pyplot as plt
 import os
 from glob import glob
 import nibabel as nib
-from monai.transforms import Compose, ScaleIntensity, Resize, AddChannel
+from monai.transforms import Compose, ScaleIntensity, Resize, EnsureType
 from utils import gradient_penalty, save_checkpoint, load_checkpoint
 from model import Critic, Generator, initialize_weights
 
@@ -54,16 +53,32 @@ class NiftiDataset(torch.utils.data.Dataset):
             vnc_img = self.transforms(vnc_img)
             mix_img = self.transforms(mix_img)
 
-        # After transforms, images are PyTorch tensors with shape (1, D, H, W)
-        # Ensure they are float tensors
+        # Ensure the images are float tensors
         vnc_tensor = vnc_img.float()
         mix_tensor = mix_img.float()
 
         return vnc_tensor, mix_tensor
 
+# Custom transform to add a channel dimension
+class AddChannelDim:
+    def __call__(self, x):
+        """
+        Adds a new channel dimension as the first dimension of the tensor.
+        Args:
+            x (Tensor or ndarray): Input image data.
+        Returns:
+            Tensor: Image data with an added channel dimension.
+        """
+        # Convert to Tensor if not already
+        if not isinstance(x, torch.Tensor):
+            x = torch.tensor(x)
+        # Add channel dimension
+        return x.unsqueeze(0)
+
 # Transforms for data processing
 transforms = Compose([
-    AddChannel(),         # Adds a new channel dimension as the first dimension
+    EnsureType(),         # Ensures the data is a PyTorch Tensor
+    AddChannelDim(),      # Adds a new channel dimension as the first dimension
     ScaleIntensity(),     # Scales intensity values to [0, 1]
     Resize((IMAGE_SIZE, IMAGE_SIZE, IMAGE_SIZE)),  # Resize to desired dimensions
 ])
@@ -80,11 +95,11 @@ for case in cases:
         mix_path = mix_paths[0]
         if os.path.exists(vnc_path) and os.path.exists(mix_path):
             train_data.append({"VNC": vnc_path, "MIX": mix_path})
-            print("VNC path: {}, MIX: {}".format(vnc_path, mix_path))
+            print(f"VNC path: {vnc_path}, MIX: {mix_path}")
         else:
-            print("File not found: VNC or MIX in case: {}".format(case))
+            print(f"File not found: VNC or MIX in case: {case}")
     else:
-        print("Missing VNC or MIX file in case: {}".format(case))
+        print(f"Missing VNC or MIX file in case: {case}")
 
 # Check if training data is loaded
 if not train_data:
@@ -150,15 +165,14 @@ for epoch in range(NUM_EPOCHS):
         gen_losses.append(loss_gen.item())
 
         # Update progress bar
-        loop.set_description("Epoch [{}/{}]".format(epoch+1, NUM_EPOCHS))
+        loop.set_description(f"Epoch [{epoch+1}/{NUM_EPOCHS}]")
         loop.set_postfix(loss_critic=loss_critic.item(), loss_gen=loss_gen.item())
 
         # Print and log progress periodically
         if batch_idx % 10 == 0:
             print(
-                "Epoch [{}/{}] Batch {}/{} Loss D: {:.4f}, Loss G: {:.4f}".format(
-                    epoch+1, NUM_EPOCHS, batch_idx, len(loader), loss_critic.item(), loss_gen.item()
-                )
+                f"Epoch [{epoch+1}/{NUM_EPOCHS}] Batch {batch_idx}/{len(loader)} "
+                f"Loss D: {loss_critic.item():.4f}, Loss G: {loss_gen.item():.4f}"
             )
 
             with torch.no_grad():
@@ -179,9 +193,9 @@ for epoch in range(NUM_EPOCHS):
     if epoch % 50 == 0 or epoch == NUM_EPOCHS - 1:
         save_checkpoint(
             {'gen': gen.state_dict(), 'disc': critic.state_dict()},
-            filename="checkpoint_epoch_{}.pth.tar".format(epoch+1)
+            filename=f"checkpoint_epoch_{epoch+1}.pth.tar"
         )
-        torch.save(fake, "output_fake_epoch_{}.pt".format(epoch+1))
+        torch.save(fake, f"output_fake_epoch_{epoch+1}.pt")
 
 # Plot and save loss curves
 plt.figure()
