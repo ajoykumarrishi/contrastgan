@@ -42,11 +42,17 @@ transforms = Compose([
 cases = glob(os.path.join(data_dir, "*"))
 train_data = []
 for case in cases:
-    vnc_path = glob(os.path.join(case, "*_VNC.nii.gz"))[0]
-    mix_path = glob(os.path.join(case, "*_MIX.nii.gz"))[0]
-    if os.path.exists(vnc_path) and os.path.exists(mix_path):
-        train_data.append({"VNC": vnc_path, "MIX": mix_path})
-        print(f"VNC path: {vnc_path}, MIX: {mix_path}")
+    vnc_paths = glob(os.path.join(case, "*_VNC.nii.gz"))
+    mix_paths = glob(os.path.join(case, "*_MIX.nii.gz"))
+    
+    if vnc_paths and mix_paths:
+        vnc_path = vnc_paths[0]  # Safely access the first result
+        mix_path = mix_paths[0]
+        if os.path.exists(vnc_path) and os.path.exists(mix_path):
+            train_data.append({"VNC": vnc_path, "MIX": mix_path})
+            print(f"VNC path: {vnc_path}, MIX: {mix_path}")
+    else:
+        print(f"Missing VNC or MIX file in case: {case}")
 
 dataset = Dataset(train_data, transforms)
 loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
