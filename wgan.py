@@ -31,7 +31,7 @@ LAMBDA_GP = 10
 
 # Transforms for data processing
 transforms = Compose([
-    LoadImage(image_only=True),
+    LoadImage(image_only=True, reader="NiababelReader"),
     EnsureChannelFirst(),
     ScaleIntensity(),
     Resize((IMAGE_SIZE, IMAGE_SIZE, IMAGE_SIZE)),
@@ -46,6 +46,7 @@ for case in cases:
     mix_path = glob(os.path.join(case, "*_MIX.nii.gz"))[0]
     if os.path.exists(vnc_path) and os.path.exists(mix_path):
         train_data.append({"VNC": vnc_path, "MIX": mix_path})
+        print(f"VNC path: {vnc_path}, MIX: {mix_path}")
 
 dataset = Dataset(train_data, transforms)
 loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
