@@ -1,40 +1,41 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torchvision
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import os
 from glob import glob
-import nibabel as nib  # Importing nibabel for direct file handling
-from monai.data import Dataset
-from monai.transforms import EnsureChannelFirst, ScaleIntensity, Resize, Compose, ToTensor
+import nibabel as nib
+from monai.transforms import Compose, ScaleIntensity, Resize, EnsureType
 from utils import gradient_penalty, save_checkpoint, load_checkpoint
 from model import Critic, Generator, initialize_weights
 
 # Set up directories
-root_dir = os.path.dirname(os.path.abspath(__file__))  # StyleGAN repo directory
+root_dir = os.path.dirname(os.path.abspath(__file__))  # Current script directory
 data_dir = os.path.join(root_dir, '..', 'data')  # Move up one level to access data
 
 # Hyperparameters etc.
 device = "cuda" if torch.cuda.is_available() else "cpu"
 LEARNING_RATE = 1e-4
-BATCH_SIZE = 2
-IMAGE_SIZE = 64
-CHANNELS_IMG = 1
-NUM_EPOCHS = 100
+BATCH_SIZE = 1  # For large 3D data, batch size of 1 is reasonable
+IMAGE_SIZE = 64  # Adjust as needed
+CHANNELS_IMG = 1  # Single-channel images (grayscale)
+NUM_EPOCHS = 500
 FEATURES_CRITIC = 16
 FEATURES_GEN = 16
 CRITIC_ITERATIONS = 5
 LAMBDA_GP = 10
 
-# Dataset class using nibabel directly
-class NiftiDataset(Dataset):
+# Custom Dataset class using nibabel directly
+class NiftiDataset(torch.utils.data.Dataset):
+    """
+    Custom Dataset class for loading NIfTI images using nibabel.
+    """
     def __init__(self, data, transforms=None):
-        self.data = data
-        self.transforms = transforms
+        self.data = data  # List of dictionaries with 'VNC' and 'MIX' keys
+        self.transforms = transforms  # Transforms to apply
 
     def __len__(self):
         return len(self.data)
@@ -43,30 +44,46 @@ class NiftiDataset(Dataset):
         vnc_path = self.data[idx]["VNC"]
         mix_path = self.data[idx]["MIX"]
 
-        # Load using nibabel
+        # Load images using nibabel
         vnc_img = nib.load(vnc_path).get_fdata()
         mix_img = nib.load(mix_path).get_fdata()
 
-        # Convert to PyTorch tensors
-        vnc_tensor = torch.from_numpy(vnc_img).float()
-        mix_tensor = torch.from_numpy(mix_img).float()
-
         # Apply transforms if provided
         if self.transforms:
-            vnc_tensor = self.transforms(vnc_tensor)
-            mix_tensor = self.transforms(mix_tensor)
+            vnc_img = self.transforms(vnc_img)
+            mix_img = self.transforms(mix_img)
+
+        # Ensure the images are float tensors
+        vnc_tensor = vnc_img.float()
+        mix_tensor = mix_img.float()
 
         return vnc_tensor, mix_tensor
 
+# Custom transform to add a channel dimension
+class AddChannelDim:
+    def __call__(self, x):
+        """
+        Adds a new channel dimension as the first dimension of the tensor.
+        Args:
+            x (Tensor or ndarray): Input image data.
+        Returns:
+            Tensor: Image data with an added channel dimension.
+        """
+        # Convert to Tensor if not already
+        if not isinstance(x, torch.Tensor):
+            x = torch.tensor(x)
+        # Add channel dimension
+        return x.unsqueeze(0)
+
 # Transforms for data processing
 transforms = Compose([
-    EnsureChannelFirst(),
-    ScaleIntensity(),
-    Resize((IMAGE_SIZE, IMAGE_SIZE, IMAGE_SIZE)),
-    ToTensor(),
+    EnsureType(),         # Ensures the data is a PyTorch Tensor
+    AddChannelDim(),      # Adds a new channel dimension as the first dimension
+    ScaleIntensity(),     # Scales intensity values to [0, 1]
+    Resize((IMAGE_SIZE, IMAGE_SIZE, IMAGE_SIZE)),  # Resize to desired dimensions
 ])
 
-# Dataset and dataloader setup
+# Dataset and DataLoader setup
 cases = glob(os.path.join(data_dir, "*"))
 train_data = []
 for case in cases:
@@ -74,7 +91,7 @@ for case in cases:
     mix_paths = glob(os.path.join(case, "*_MIX.nii.gz"))
     
     if vnc_paths and mix_paths:
-        vnc_path = vnc_paths[0]  # Safely access the first result
+        vnc_path = vnc_paths[0]
         mix_path = mix_paths[0]
         if os.path.exists(vnc_path) and os.path.exists(mix_path):
             train_data.append({"VNC": vnc_path, "MIX": mix_path})
@@ -84,8 +101,14 @@ for case in cases:
     else:
         print(f"Missing VNC or MIX file in case: {case}")
 
+# Check if training data is loaded
+if not train_data:
+    raise ValueError("No training data found. Please check your data directory.")
+
 dataset = NiftiDataset(train_data, transforms)
-loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+loader = DataLoader(
+    dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0  # num_workers=0 to avoid multiprocessing issues
+)
 
 # Initialize models
 gen = Generator(CHANNELS_IMG, FEATURES_GEN).to(device)
@@ -98,8 +121,8 @@ opt_gen = optim.Adam(gen.parameters(), lr=LEARNING_RATE, betas=(0.0, 0.9))
 opt_critic = optim.Adam(critic.parameters(), lr=LEARNING_RATE, betas=(0.0, 0.9))
 
 # TensorBoard writers
-writer_real = SummaryWriter(f"logs/3D_WGAN_GP/real")
-writer_fake = SummaryWriter(f"logs/3D_WGAN_GP/fake")
+writer_real = SummaryWriter("logs/3D_WGAN_GP/real")
+writer_fake = SummaryWriter("logs/3D_WGAN_GP/fake")
 step = 0
 
 # Lists for tracking losses
@@ -111,7 +134,8 @@ critic.train()
 
 # Training loop
 for epoch in range(NUM_EPOCHS):
-    for batch_idx, (vnc, mix) in enumerate(tqdm(loader)):
+    loop = tqdm(loader, leave=True)
+    for batch_idx, (vnc, mix) in enumerate(loop):
         vnc = vnc.to(device)
         mix = mix.to(device)
         cur_batch_size = vnc.shape[0]
@@ -120,19 +144,20 @@ for epoch in range(NUM_EPOCHS):
         for _ in range(CRITIC_ITERATIONS):
             fake = gen(vnc)
             critic_real = critic(mix).reshape(-1)
-            critic_fake = critic(fake).reshape(-1)
-            gp = gradient_penalty(critic, mix, fake, device=device)
+            critic_fake = critic(fake.detach()).reshape(-1)
+            gp = gradient_penalty(critic, mix, fake.detach(), device=device)
             loss_critic = -(torch.mean(critic_real) - torch.mean(critic_fake)) + LAMBDA_GP * gp
             critic.zero_grad()
-            loss_critic.backward(retain_graph=True)
+            loss_critic.backward()
             opt_critic.step()
 
         # Track critic loss
         critic_losses.append(loss_critic.item())
 
         # Train Generator
-        gen_fake = critic(fake).reshape(-1)
-        loss_gen = -torch.mean(gen_fake)
+        fake = gen(vnc)
+        output = critic(fake).reshape(-1)
+        loss_gen = -torch.mean(output)
         gen.zero_grad()
         loss_gen.backward()
         opt_gen.step()
@@ -140,27 +165,38 @@ for epoch in range(NUM_EPOCHS):
         # Track generator loss
         gen_losses.append(loss_gen.item())
 
-        # Print and log progress
+        # Update progress bar
+        loop.set_description(f"Epoch [{epoch+1}/{NUM_EPOCHS}]")
+        loop.set_postfix(loss_critic=loss_critic.item(), loss_gen=loss_gen.item())
+
+        # Print and log progress periodically
         if batch_idx % 10 == 0:
             print(
-                f"Epoch [{epoch}/{NUM_EPOCHS}] Batch {batch_idx}/{len(loader)} "
-                f"Loss D: {loss_critic:.4f}, Loss G: {loss_gen:.4f}"
+                f"Epoch [{epoch+1}/{NUM_EPOCHS}] Batch {batch_idx}/{len(loader)} "
+                f"Loss D: {loss_critic.item():.4f}, Loss G: {loss_gen.item():.4f}"
             )
 
             with torch.no_grad():
+                # Generate fake image for visualization
                 fake = gen(vnc[:1])
-                img_grid_real = torchvision.utils.make_grid(mix[:1], normalize=True)
-                img_grid_fake = torchvision.utils.make_grid(fake, normalize=True)
+                # Select a slice in the middle for visualization
+                slice_idx = fake.shape[2] // 2
+                real_slice = mix[0, 0, slice_idx, :, :].cpu().numpy()
+                fake_slice = fake[0, 0, slice_idx, :, :].cpu().numpy()
 
-                writer_real.add_image("Real", img_grid_real, global_step=step)
-                writer_fake.add_image("Fake", img_grid_fake, global_step=step)
+                # Log images to TensorBoard
+                writer_real.add_image("Real", real_slice, global_step=step, dataformats='HW')
+                writer_fake.add_image("Fake", fake_slice, global_step=step, dataformats='HW')
 
             step += 1
 
     # Save models and outputs periodically
-    if epoch % 10 == 0 or epoch == NUM_EPOCHS - 1:
-        save_checkpoint({'gen': gen.state_dict(), 'disc': critic.state_dict()}, filename=f"checkpoint_epoch_{epoch}.pth.tar")
-        torch.save(fake, f"output_fake_epoch_{epoch}.pt")
+    if epoch % 50 == 0 or epoch == NUM_EPOCHS - 1:
+        save_checkpoint(
+            {'gen': gen.state_dict(), 'disc': critic.state_dict()},
+            filename=f"checkpoint_epoch_{epoch+1}.pth.tar"
+        )
+        torch.save(fake, f"output_fake_epoch_{epoch+1}.pt")
 
 # Plot and save loss curves
 plt.figure()
