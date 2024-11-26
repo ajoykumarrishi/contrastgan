@@ -132,6 +132,7 @@ class WGAN_GP(pl.LightningModule):
         # Initialize critic using MONAI's Critic class
         in_shape = (hparams['channels_img'], hparams['image_size'], hparams['image_size'], hparams['image_size'])
         self.critic = Critic(
+            spatial_dims=3,
             in_shape=in_shape[1:],  # Exclude channel dimension
             channels=hparams['features_critic'],
             strides=(2, 2, 2, 2),
