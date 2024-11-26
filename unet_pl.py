@@ -1,20 +1,21 @@
-# unet_pl.py
+import os  # Importing os for file path operations
+from glob import glob  # Importing glob to search for file patterns
+import numpy as np  # Importing numpy for numerical operations
+import matplotlib.pyplot as plt  # Importing matplotlib for visualizations
 
-import os
-from glob import glob
-import numpy as np
-import matplotlib.pyplot as plt
+import torch  # Importing PyTorch for deep learning operations
+import torch.nn as nn  # Importing PyTorch's neural network module
+import torch.optim as optim  # Importing PyTorch's optimization module
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
+import pytorch_lightning as pl  # Importing PyTorch Lightning for training
+from pytorch_lightning import Trainer  # Importing Trainer class for model training
+from pytorch_lightning.loggers import TensorBoardLogger  # Importing TensorBoard logger
 
-import pytorch_lightning as pl
-from pytorch_lightning import Trainer
-from pytorch_lightning.loggers import TensorBoardLogger
-
-from monai.networks.nets import UNet
-from monai.networks.nets.resnet import ResNet, get_inplanes  # Updated import
+from monai.networks.nets import UNet  # Importing MONAI's UNet for 3D image generation
+from monai.networks.nets.resnet import (
+    ResNet,
+    get_inplanes,
+)  # Importing MONAI's ResNet for critic
 from monai.transforms import (
     Compose,
     LoadImaged,
@@ -23,262 +24,251 @@ from monai.transforms import (
     Resized,
     EnsureTyped,
 )
-from monai.data import CacheDataset, DataLoader
-from monai.config import print_config
 
-# Print MONAI configuration
-print_config()
+# Importing MONAI transforms for preprocessing medical images
 
-# Hyperparameters and configurations
+from monai.data import (
+    CacheDataset,
+    DataLoader,
+)  # Importing MONAI dataset and dataloader
+from monai.config import print_config  # Importing MONAI config printer
+
+print_config()  # Print MONAI configuration for debugging
+
+# Hyperparameter dictionary
 hparams = {
-    'learning_rate': 1e-4,
-    'batch_size': 1,
-    'image_size': 64,
-    'channels_img': 1,
-    'num_epochs': 500,
-    'features_gen': (16, 32, 64, 128, 256),
-    'critic_iterations': 5,
-    'lambda_gp': 10,
-    'beta1': 0.0,
-    'beta2': 0.9,
-    'num_workers': 0,  # Adjust based on your system
+    "learning_rate": 1e-4,  # Learning rate for optimizers
+    "batch_size": 1,  # Number of samples per training batch
+    "image_size": 64,  # Dimensions of input/output 3D images
+    "channels_img": 1,  # Number of channels in images (grayscale)
+    "num_epochs": 500,  # Number of training epochs
+    "features_gen": (16, 32, 64, 128, 256),  # Generator layer features
+    "critic_iterations": 5,  # Critic updates per generator update
+    "lambda_gp": 10,  # Gradient penalty weight
+    "beta1": 0.0,  # Beta1 for Adam optimizer
+    "beta2": 0.9,  # Beta2 for Adam optimizer
+    "num_workers": 0,  # DataLoader workers
 }
 
-# DataModule for handling data loading
+# DataModule for managing data loading
 class NiftiDataModule(pl.LightningDataModule):
-    def __init__(self, data_dir, batch_size, image_size, num_workers=0):
-        super().__init__()
-        self.data_dir = data_dir
-        self.batch_size = batch_size
-        self.image_size = image_size
-        self.num_workers = num_workers
+    def __init__(
+        self, data_dir, batch_size, image_size, num_workers=0
+    ):  # Initialize with paths and settings
+        super().__init__()  # Initialize LightningDataModule
+        self.data_dir = data_dir  # Set data directory
+        self.batch_size = batch_size  # Set batch size
+        self.image_size = image_size  # Set target image size
+        self.num_workers = num_workers  # Set number of worker processes
 
-    def prepare_data(self):
-        # No preparation needed
-        pass
+    def prepare_data(self):  # Placeholder for data preparation
+        pass  # No data preparation required
 
-    def setup(self, stage=None):
-        # Create dataset
-        cases = glob(os.path.join(self.data_dir, "*"))
-        data_dicts = []
-        for case in cases:
-            vnc_paths = glob(os.path.join(case, "*_VNC.nii.gz"))
-            mix_paths = glob(os.path.join(case, "*_MIX.nii.gz"))
-
-            if vnc_paths and mix_paths:
-                vnc_path = vnc_paths[0]
-                mix_path = mix_paths[0]
-                if os.path.exists(vnc_path) and os.path.exists(mix_path):
-                    data_dicts.append({"VNC": vnc_path, "MIX": mix_path})
+    def setup(self, stage=None):  # Dataset setup
+        cases = glob(os.path.join(self.data_dir, "*"))  # Find all case directories
+        data_dicts = []  # Initialize list for data dictionaries
+        for case in cases:  # Iterate through case directories
+            vnc_paths = glob(os.path.join(case, "*_VNC.nii.gz"))  # Find VNC files
+            mix_paths = glob(os.path.join(case, "*_MIX.nii.gz"))  # Find MIX files
+            if vnc_paths and mix_paths:  # Check if both file types exist
+                vnc_path, mix_path = vnc_paths[0], mix_paths[0]  # Get file paths
+                if os.path.exists(vnc_path) and os.path.exists(
+                    mix_path
+                ):  # Validate file existence
+                    data_dicts.append(
+                        {"VNC": vnc_path, "MIX": mix_path}
+                    )  # Add file paths to data_dict
                 else:
-                    print(f"File not found: VNC or MIX in case: {case}")
+                    print(
+                        f"File not found: VNC or MIX in case: {case}"
+                    )  # Log missing file
             else:
-                print(f"Missing VNC or MIX file in case: {case}")
-
-        if not data_dicts:
-            raise ValueError("No training data found. Please check your data directory.")
-
-        # Define transforms using dictionary-based transforms
-        self.transforms = Compose([
-            LoadImaged(keys=["VNC", "MIX"]),
-            EnsureChannelFirstd(keys=["VNC", "MIX"]),
-            ScaleIntensityd(keys=["VNC", "MIX"]),
-            Resized(keys=["VNC", "MIX"], spatial_size=(self.image_size, self.image_size, self.image_size)),
-            EnsureTyped(keys=["VNC", "MIX"]),
-        ])
-
-        self.train_dataset = CacheDataset(
-            data=data_dicts,
-            transform=self.transforms,
+                print(f"Missing VNC or MIX file in case: {case}")  # Log incomplete case
+        if not data_dicts:  # Validate data availability
+            raise ValueError(
+                "No training data found. Please check your data directory."
+            )  # Raise error
+        self.transforms = Compose(
+            [  # Define preprocessing transforms
+                LoadImaged(keys=["VNC", "MIX"]),  # Load NIfTI images
+                EnsureChannelFirstd(keys=["VNC", "MIX"]),  # Ensure channel-first format
+                ScaleIntensityd(keys=["VNC", "MIX"]),  # Normalize intensity values
+                Resized(
+                    keys=["VNC", "MIX"],
+                    spatial_size=(self.image_size, self.image_size, self.image_size),
+                ),  # Resize images
+                EnsureTyped(keys=["VNC", "MIX"]),  # Convert to PyTorch tensors
+            ]
+        )
+        self.train_dataset = CacheDataset(  # Create dataset with caching
+            data=data_dicts,  # Provide data dictionaries
+            transform=self.transforms,  # Apply preprocessing transforms
             cache_rate=1.0,  # Cache all data
-            num_workers=self.num_workers,
+            num_workers=self.num_workers,  # Use specified workers
         )
 
-    def train_dataloader(self):
+    def train_dataloader(self):  # Return DataLoader for training
         return DataLoader(
-            self.train_dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
+            self.train_dataset,  # Dataset to load
+            batch_size=self.batch_size,  # Number of samples per batch
+            shuffle=True,  # Enable shuffling
+            num_workers=self.num_workers,  # Number of worker processes
         )
 
-# WGAN-GP model using PyTorch Lightning for Style Transfer
+
+# LightningModule for WGAN-GP
 class WGAN_GP(pl.LightningModule):
-    def __init__(self, hparams):
-        super().__init__()
-        # Save hyperparameters
-        self.save_hyperparameters(hparams)
-        self.example_input_array = torch.rand(
-            1, hparams['channels_img'],
-            hparams['image_size'], hparams['image_size'], hparams['image_size']
+    def __init__(self, hparams):  # Initialize WGAN-GP
+        super().__init__()  # Initialize LightningModule
+        self.save_hyperparameters(hparams)  # Save hyperparameters for easy access
+        self.example_input_array = torch.rand(  # Define example input for tracing
+            1,
+            hparams["channels_img"],
+            hparams["image_size"],
+            hparams["image_size"],
+            hparams["image_size"],
         )
-        # Set automatic optimization to False for manual optimization
-        self.automatic_optimization = False
-
-        # Use MONAI's UNet for the generator (style transfer)
-        self.generator = UNet(
+        self.automatic_optimization = False  # Disable automatic optimization
+        self.generator = UNet(  # Define UNet generator for style transfer
             spatial_dims=3,
-            in_channels=hparams['channels_img'],
-            out_channels=hparams['channels_img'],
-            channels=hparams['features_gen'],
+            in_channels=hparams["channels_img"],
+            out_channels=hparams["channels_img"],
+            channels=hparams["features_gen"],
             strides=(2, 2, 2, 2),
             num_res_units=2,
             kernel_size=3,
-            act='PRELU',
-            norm='INSTANCE',
+            act="PRELU",
+            norm="INSTANCE",
             dropout=0.0,
         )
-
-        # Initialize the critic using MONAI's ResNet
-        block_inplanes = get_inplanes()
-        self.critic = ResNet(
-            block='basic',  # Use 'basic' for ResNetBlock
-            layers=[2, 2, 2, 2],  # ResNet18 configuration
+        block_inplanes = get_inplanes()  # Get ResNet input planes
+        self.critic = ResNet(  # Define ResNet critic
+            block="basic",
+            layers=[2, 2, 2, 2],
             block_inplanes=block_inplanes,
             spatial_dims=3,
-            n_input_channels=hparams['channels_img'],
+            n_input_channels=hparams["channels_img"],
             conv1_t_size=7,
             conv1_t_stride=2,
             no_max_pool=False,
-            shortcut_type='B',
+            shortcut_type="B",
             widen_factor=1.0,
-            num_classes=1,  # Output a single scalar
+            num_classes=1,
             feed_forward=True,
             bias_downsample=True,
-            act=('relu', {'inplace': True}),
-            norm='batch',
+            act=("relu", {"inplace": True}),
+            norm="batch",
         )
 
-    def forward(self, x):
-        return self.generator(x)
-
-    def gradient_penalty(self, real, fake):
-        batch_size = real.size(0)
-        device = real.device
-        epsilon = torch.rand(batch_size, 1, 1, 1, 1, device=device)
-        interpolated_images = epsilon * real + (1 - epsilon) * fake
-        interpolated_images.requires_grad_(True)
-        mixed_scores = self.critic(interpolated_images)
-
-        gradient = torch.autograd.grad(
+    def gradient_penalty(self, real, fake):  # Calculate gradient penalty for WGAN-GP
+        batch_size = real.size(0)  # Batch size
+        device = real.device  # Device (CPU/GPU)
+        epsilon = torch.rand(
+            batch_size, 1, 1, 1, 1, device=device
+        )  # Random weights for interpolation
+        interpolated_images = (
+            epsilon * real + (1 - epsilon) * fake
+        )  # Interpolate between real and fake
+        interpolated_images.requires_grad_(True)  # Enable gradient tracking
+        mixed_scores = self.critic(interpolated_images)  # Pass through critic
+        gradient = torch.autograd.grad(  # Calculate gradients
             inputs=interpolated_images,
             outputs=mixed_scores,
             grad_outputs=torch.ones_like(mixed_scores),
             create_graph=True,
             retain_graph=True,
         )[0]
+        gradient = gradient.view(gradient.size(0), -1)  # Flatten gradients
+        gradient_norm = gradient.norm(2, dim=1)  # Compute L2 norm
+        gp = torch.mean((gradient_norm - 1) ** 2)  # Calculate penalty
+        return gp  # Return gradient penalty
 
-        gradient = gradient.view(gradient.size(0), -1)
-        gradient_norm = gradient.norm(2, dim=1)
-        gp = torch.mean((gradient_norm - 1) ** 2)
-        return gp
+    def training_step(self, batch, batch_idx):  # Training loop for WGAN-GP
+        vnc, mix = batch["VNC"].float(), batch["MIX"].float()  # Get batch data
+        opt_gen, opt_critic = self.optimizers()  # Get optimizers
+        for _ in range(
+            self.hparams["critic_iterations"]
+        ):  # Update critic multiple times
+            fake = self.generator(vnc)  # Generate fake images
+            critic_real, critic_fake = self.critic(mix), self.critic(
+                fake.detach()
+            )  # Evaluate real and fake
+            gp = self.gradient_penalty(mix, fake.detach())  # Calculate gradient penalty
+            loss_critic = (
+                -(torch.mean(critic_real) - torch.mean(critic_fake))
+                + self.hparams["lambda_gp"] * gp
+            )  # Critic loss
+            opt_critic.zero_grad()  # Reset gradients for critic
+            self.manual_backward(loss_critic, retain_graph=True)  # Backpropagate
+            opt_critic.step()  # Update critic weights
+        self.log(
+            "loss_critic",
+            loss_critic,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+        )  # Log critic loss
+        fake = self.generator(vnc)  # Generate new fake images
+        gen_loss = -torch.mean(self.critic(fake))  # Generator loss
+        opt_gen.zero_grad()  # Reset gradients for generator
+        self.manual_backward(gen_loss)  # Backpropagate
+        opt_gen.step()  # Update generator weights
+        self.log(
+            "loss_gen",
+            gen_loss,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+        )  # Log generator loss
 
-    def training_step(self, batch, batch_idx):
-        vnc = batch['VNC']
-        mix = batch['MIX']
-        vnc = vnc.float()
-        mix = mix.float()
-        opt_gen, opt_critic = self.optimizers()
-
-        # Train Critic
-        for _ in range(self.hparams['critic_iterations']):
-            fake = self.generator(vnc)
-            critic_real = self.critic(mix)
-            critic_fake = self.critic(fake.detach())
-            gp = self.gradient_penalty(mix, fake.detach())
-            loss_critic = -(torch.mean(critic_real) - torch.mean(critic_fake)) + self.hparams['lambda_gp'] * gp
-
-            opt_critic.zero_grad()
-            self.manual_backward(loss_critic, retain_graph=True)
-            opt_critic.step()
-
-        self.log('loss_critic', loss_critic, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-
-        # Train Generator
-        fake = self.generator(vnc)
-        gen_loss = -torch.mean(self.critic(fake))
-
-        opt_gen.zero_grad()
-        self.manual_backward(gen_loss)
-        opt_gen.step()
-
-        self.log('loss_gen', gen_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-
-        # Log images every 10 batches
-        if batch_idx % 10 == 0:
-            with torch.no_grad():
-                fake = self.generator(vnc)
-                # Assuming batch size is 1
-                slice_idx = fake.shape[2] // 2
-                vnc_slice = vnc[0, 0, slice_idx, :, :].cpu().numpy()
-                mix_slice = mix[0, 0, slice_idx, :, :].cpu().numpy()
-                fake_slice = fake[0, 0, slice_idx, :, :].cpu().numpy()
-
-                fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-                axes[0].imshow(vnc_slice, cmap='gray')
-                axes[0].set_title('VNC (Input)')
-                axes[0].axis('off')
-                axes[1].imshow(mix_slice, cmap='gray')
-                axes[1].set_title('MIX (Real)')
-                axes[1].axis('off')
-                axes[2].imshow(fake_slice, cmap='gray')
-                axes[2].set_title('Generated')
-                axes[2].axis('off')
-                plt.tight_layout()
-                self.logger.experiment.add_figure('VNC vs MIX vs Generated', fig, global_step=self.global_step)
-                plt.close(fig)
-
-    def configure_optimizers(self):
+    def configure_optimizers(self):  # Configure optimizers for generator and critic
         opt_gen = optim.Adam(
             self.generator.parameters(),
-            lr=self.hparams['learning_rate'],
-            betas=(self.hparams['beta1'], self.hparams['beta2'])
-        )
+            lr=self.hparams["learning_rate"],
+            betas=(self.hparams["beta1"], self.hparams["beta2"]),
+        )  # Generator optimizer
+
         opt_critic = optim.Adam(
             self.critic.parameters(),
-            lr=self.hparams['learning_rate'],
-            betas=(self.hparams['beta1'], self.hparams['beta2'])
-        )
-        return [opt_gen, opt_critic], []
+            lr=self.hparams["learning_rate"],
+            betas=(self.hparams["beta1"], self.hparams["beta2"]),
+        )  # Critic optimizer
+        
+        return [opt_gen, opt_critic], []  # Return optimizers
 
-# Main script
-if __name__ == '__main__':
-    # Set up directories
-    root_dir = os.path.dirname(os.path.abspath(__file__))  # Current script directory
-    data_dir = os.path.join(root_dir, '..', 'data')  # Adjust the path to your data directory
 
-    # Instantiate the DataModule
+# Main script execution
+if __name__ == "__main__":
+    root_dir = os.path.dirname(os.path.abspath(__file__))  # Get script directory
+    data_dir = os.path.join(root_dir, "..", "data")  # Define data directory path
     data_module = NiftiDataModule(
         data_dir=data_dir,
-        batch_size=hparams['batch_size'],
-        image_size=hparams['image_size'],
-        num_workers=hparams['num_workers']
-    )
+        batch_size=hparams["batch_size"],
+        image_size=hparams["image_size"],
+        num_workers=hparams["num_workers"],
+    )  # Initialize DataModule
 
-    # Instantiate the model
-    model = WGAN_GP(hparams)
+    model = WGAN_GP(hparams)  # Initialize WGAN-GP model
 
-    # Set up the logger
-    logger = TensorBoardLogger("tb_logs", name="WGAN_GP")
-
-    # Set up callbacks
-    checkpoint_callback = pl.callbacks.ModelCheckpoint(
-        dirpath='checkpoints',
-        filename='WGAN_GP-{epoch:02d}-{loss_gen:.2f}-{loss_critic:.2f}',
+    logger = TensorBoardLogger("tb_logs", name="WGAN_GP")  # Set up TensorBoard logger
+    checkpoint_callback = pl.callbacks.ModelCheckpoint(  # Set up model checkpointing
+        dirpath="checkpoints",
+        filename="WGAN_GP-{epoch:02d}-{loss_gen:.2f}-{loss_critic:.2f}",
         save_top_k=3,
         verbose=True,
-        monitor='loss_gen',
-        mode='min',
+        monitor="loss_gen",
+        mode="min",
     )
 
-     # Determine the accelerator and devices based on CUDA availability
+    # Determine the accelerator and devices based on CUDA availability
     if torch.cuda.is_available():
         accelerator = 'gpu'
         devices = 1  # You can set this to 'auto' or the number of GPUs you want to use
     else:
         accelerator = 'cpu'
         devices = 1  # Must be an int > 0 for CPUAccelerator
-
     # Set up the Trainer
         trainer = Trainer(
         max_epochs=hparams['num_epochs'],
@@ -288,5 +278,4 @@ if __name__ == '__main__':
         callbacks=[checkpoint_callback],
     )
 
-    # Train the model
-    trainer.fit(model, data_module)
+    trainer.fit(model, data_module)  # Start training
