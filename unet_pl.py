@@ -272,7 +272,8 @@ if __name__ == '__main__':
     # Set up the Trainer
     trainer = Trainer(
         max_epochs=hparams['num_epochs'],
-        gpus=1 if torch.cuda.is_available() else 0,
+        accelerator='auto',
+        devices='auto',
         logger=logger,
         callbacks=[checkpoint_callback],
     )
