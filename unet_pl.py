@@ -16,11 +16,11 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from monai.networks.nets import UNet, Critic
 from monai.transforms import (
     Compose,
-    LoadImage,
-    EnsureChannelFirst,
-    ScaleIntensity,
-    Resize,
-    EnsureType,
+    LoadImaged,
+    EnsureChannelFirstd,
+    ScaleIntensityd,
+    Resized,
+    EnsureTyped,
 )
 from monai.data import CacheDataset, DataLoader
 from monai.config import print_config
@@ -78,13 +78,13 @@ class NiftiDataModule(pl.LightningDataModule):
         if not data_dicts:
             raise ValueError("No training data found. Please check your data directory.")
 
-        # Define transforms
+        # Define transforms using dictionary-based transforms
         self.transforms = Compose([
-            LoadImage(keys=["VNC", "MIX"], image_only=True),
-            EnsureChannelFirst(keys=["VNC", "MIX"]),  # Replaces AddChannel
-            ScaleIntensity(),
-            Resize((self.image_size, self.image_size, self.image_size)),
-            EnsureType(),
+            LoadImaged(keys=["VNC", "MIX"]),
+            EnsureChannelFirstd(keys=["VNC", "MIX"]),
+            ScaleIntensityd(keys=["VNC", "MIX"]),
+            Resized(keys=["VNC", "MIX"], spatial_size=(self.image_size, self.image_size, self.image_size)),
+            EnsureTyped(keys=["VNC", "MIX"]),
         ])
 
         self.train_dataset = CacheDataset(
@@ -123,7 +123,7 @@ class WGAN_GP(pl.LightningModule):
             channels=hparams['features_gen'],
             strides=(2, 2, 2, 2),
             num_res_units=2,
-            kernel_size=3,  # Changed kernel_size to 3
+            kernel_size=3,  # Using kernel_size=3 as previously adjusted
             act='PRELU',
             norm='INSTANCE',
             dropout=0.0,
@@ -135,7 +135,7 @@ class WGAN_GP(pl.LightningModule):
             in_shape=in_shape[1:],  # Exclude channel dimension
             channels=hparams['features_critic'],
             strides=(2, 2, 2, 2),
-            kernel_size=3,  # Changed kernel_size to 3
+            kernel_size=3,  # Using kernel_size=3 as previously adjusted
             num_res_units=2,
             act='PRELU',
             norm='INSTANCE',
@@ -272,8 +272,8 @@ if __name__ == '__main__':
     # Set up the Trainer
     trainer = Trainer(
         max_epochs=hparams['num_epochs'],
-        accelerator='auto',
-        devices='auto',
+        accelerator='gpu' if torch.cuda.is_available() else 'cpu',
+        devices=1 if torch.cuda.is_available() else None,
         logger=logger,
         callbacks=[checkpoint_callback],
     )
