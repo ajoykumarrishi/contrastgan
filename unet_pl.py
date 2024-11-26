@@ -1,4 +1,4 @@
-# wgan_pl.py
+# unet_pl.py
 
 import os
 from glob import glob
@@ -13,7 +13,7 @@ import pytorch_lightning as pl
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import TensorBoardLogger
 
-from monai.networks.nets import UNet, Critic
+from monai.networks.nets import UNet, ResNet
 from monai.transforms import (
     Compose,
     LoadImaged,
@@ -35,7 +35,6 @@ hparams = {
     'image_size': 64,
     'channels_img': 1,
     'num_epochs': 500,
-    'features_critic': (16, 32, 64, 128),
     'features_gen': (16, 32, 64, 128, 256),
     'critic_iterations': 5,
     'lambda_gp': 10,
@@ -123,25 +122,28 @@ class WGAN_GP(pl.LightningModule):
             channels=hparams['features_gen'],
             strides=(2, 2, 2, 2),
             num_res_units=2,
-            kernel_size=3,  # Using kernel_size=3 as previously adjusted
+            kernel_size=3,
             act='PRELU',
             norm='INSTANCE',
             dropout=0.0,
         )
 
-        # Initialize critic using MONAI's Critic class
-        in_shape = (hparams['channels_img'], hparams['image_size'], hparams['image_size'], hparams['image_size'])
-        self.critic = Critic(
+        # Initialize the critic using MONAI's ResNet without ResNetBlock
+        self.critic = ResNet(
+            block='basic',  # Use 'basic' for ResNetBlock
+            layers=[2, 2, 2, 2],  # ResNet18 configuration
             spatial_dims=3,
-            in_shape=in_shape[1:],  # Exclude channel dimension
-            channels=hparams['features_critic'],
-            strides=(2, 2, 2, 2),
-            kernel_size=3,  # Using kernel_size=3 as previously adjusted
-            num_res_units=2,
-            act='PRELU',
-            norm='INSTANCE',
-            dropout=0.25,
-            bias=True,
+            n_input_channels=hparams['channels_img'],
+            conv1_t_size=7,
+            conv1_t_stride=2,
+            no_max_pool=False,
+            shortcut_type='B',
+            widen_factor=1.0,
+            num_classes=1,  # Output a single scalar
+            feed_forward=True,
+            bias_downsample=True,
+            act=('relu', {'inplace': True}),
+            norm='batch',
         )
 
     def forward(self, x):
@@ -235,10 +237,6 @@ class WGAN_GP(pl.LightningModule):
             betas=(self.hparams['beta1'], self.hparams['beta2'])
         )
         return [opt_gen, opt_critic], []
-
-    def validation_step(self, batch, batch_idx):
-        # Implement validation if needed
-        pass
 
 # Main script
 if __name__ == '__main__':
