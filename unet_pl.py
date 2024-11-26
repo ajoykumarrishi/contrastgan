@@ -123,6 +123,7 @@ class WGAN_GP(pl.LightningModule):
             channels=hparams['features_gen'],
             strides=(2, 2, 2, 2),
             num_res_units=2,
+            kernel_size=3,  # Changed kernel_size to 3
             act='PRELU',
             norm='INSTANCE',
             dropout=0.0,
@@ -134,7 +135,7 @@ class WGAN_GP(pl.LightningModule):
             in_shape=in_shape[1:],  # Exclude channel dimension
             channels=hparams['features_critic'],
             strides=(2, 2, 2, 2),
-            kernel_size=4,
+            kernel_size=3,  # Changed kernel_size to 3
             num_res_units=2,
             act='PRELU',
             norm='INSTANCE',
