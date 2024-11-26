@@ -269,11 +269,19 @@ if __name__ == '__main__':
         mode='min',
     )
 
+    # Determine the accelerator and devices based on CUDA availability
+    if torch.cuda.is_available():
+        accelerator = 'gpu'
+        devices = 1  # You can set this to 'auto' or the number of GPUs you want to use
+    else:
+        accelerator = 'cpu'
+        devices = 1  # Must be an int > 0 for CPUAccelerator
+
     # Set up the Trainer
-    trainer = Trainer(
+        trainer = Trainer(
         max_epochs=hparams['num_epochs'],
-        accelerator='gpu' if torch.cuda.is_available() else 'cpu',
-        devices=1 if torch.cuda.is_available() else None,
+        accelerator=accelerator,
+        devices=devices,
         logger=logger,
         callbacks=[checkpoint_callback],
     )
