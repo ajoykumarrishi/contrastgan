@@ -13,7 +13,8 @@ import pytorch_lightning as pl
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import TensorBoardLogger
 
-from monai.networks.nets import UNet, ResNet
+from monai.networks.nets import UNet
+from monai.networks.nets.resnet import ResNet, get_inplanes  # Updated import
 from monai.transforms import (
     Compose,
     LoadImaged,
@@ -128,10 +129,12 @@ class WGAN_GP(pl.LightningModule):
             dropout=0.0,
         )
 
-        # Initialize the critic using MONAI's ResNet without ResNetBlock
+        # Initialize the critic using MONAI's ResNet
+        block_inplanes = get_inplanes()
         self.critic = ResNet(
             block='basic',  # Use 'basic' for ResNetBlock
             layers=[2, 2, 2, 2],  # ResNet18 configuration
+            block_inplanes=block_inplanes,
             spatial_dims=3,
             n_input_channels=hparams['channels_img'],
             conv1_t_size=7,
@@ -268,7 +271,7 @@ if __name__ == '__main__':
         mode='min',
     )
 
-    # Determine the accelerator and devices based on CUDA availability
+     # Determine the accelerator and devices based on CUDA availability
     if torch.cuda.is_available():
         accelerator = 'gpu'
         devices = 1  # You can set this to 'auto' or the number of GPUs you want to use
