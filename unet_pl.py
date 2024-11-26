@@ -17,7 +17,7 @@ from monai.networks.nets import UNet, Critic
 from monai.transforms import (
     Compose,
     LoadImage,
-    AddChannel,
+    EnsureChannelFirst,
     ScaleIntensity,
     Resize,
     EnsureType,
@@ -81,7 +81,7 @@ class NiftiDataModule(pl.LightningDataModule):
         # Define transforms
         self.transforms = Compose([
             LoadImage(keys=["VNC", "MIX"], image_only=True),
-            AddChannel(),  # Adds a new channel dimension
+            EnsureChannelFirst(keys=["VNC", "MIX"]),  # Replaces AddChannel
             ScaleIntensity(),
             Resize((self.image_size, self.image_size, self.image_size)),
             EnsureType(),
