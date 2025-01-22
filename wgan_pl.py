@@ -72,6 +72,7 @@ class NiftiDataset:
                     keys=["VNC", "MIX"],
                     roi_size=(self.image_size, self.image_size, self.image_size),
                     random_size=False,
+                    random_center=True
                 ),
                 SpatialPadd(keys=["VNC", "MIX"], spatial_size=(self.image_size, self.image_size, self.image_size)),
                 RandRotate90d(keys=["VNC", "MIX"], prob=0.5, spatial_axes=(0, 1)),
@@ -152,6 +153,7 @@ class WGAN_GP(pl.LightningModule):
             opt_critic.zero_grad()
             self.manual_backward(loss_critic, retain_graph=True)
             opt_critic.step()
+            torch.cuda.empty_cache()
         self.log("loss_critic", loss_critic, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         fake = self.generator(vnc)
         gen_loss = -torch.mean(self.critic(fake))
