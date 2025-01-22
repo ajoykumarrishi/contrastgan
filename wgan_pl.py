@@ -253,11 +253,11 @@ class WGAN_GP(pl.LightningModule):
 
 # CHANGED: Updated main execution
 if __name__ == "__main__":
-    root_dir = os.path.dirname(os.path.abspath(__file__))
-    parent_dir = os.path.dirname(root_dir)
+    # Force the root directory to use /Users instead of dynamically determining it
+    forced_root_dir = "/Users/rajoykumar/contrast_enhancement"
     
     # Setup training dataset
-    train_dir = os.path.join(parent_dir, "training")
+    train_dir = os.path.join(forced_root_dir, "training")
     train_dataset = NiftiDataset(
         data_dir=train_dir,
         image_size=hparams["image_size"],
@@ -271,7 +271,7 @@ if __name__ == "__main__":
     )
     
     # Setup validation dataset
-    val_dir = os.path.join(parent_dir, "validation")
+    val_dir = os.path.join(forced_root_dir, "validation")
     val_dataset = NiftiDataset(
         data_dir=val_dir,
         image_size=hparams["image_size"],
