@@ -136,7 +136,7 @@ class WGAN_GP(pl.LightningModule):
             growth_rate=32,
             block_config=(6, 12, 24, 16),
             bn_size=4,
-            drop_rate=0.0,
+            dropout_prob=0.0,
         )
 
     def gradient_penalty(self, real, fake):
