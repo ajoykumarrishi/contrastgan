@@ -139,6 +139,9 @@ class WGAN_GP(pl.LightningModule):
             dropout_prob=0.0,
         )
 
+    def forward(self, x):
+        return self.generator(x)
+
     def gradient_penalty(self, real, fake):
         batch_size = real.size(0)
         device = real.device
