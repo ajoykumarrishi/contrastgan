@@ -32,7 +32,7 @@ print_config()
 hparams = {
     "learning_rate": 1e-4,
     "batch_size": 2,  # CHANGED: Updated from 1 to 2
-    "image_size": 64,
+    "image_size": 512,  # CHANGED: Updated to match actual image size
     "channels_img": 1,
     "num_epochs": 500,
     "features_gen": (16, 32, 64, 128, 256),
@@ -68,32 +68,23 @@ class NiftiDataset:
         if not self.data_dicts:
             raise ValueError(f"No {'validation' if is_validation else 'training'} data found. Please check your data directory.")
 
-        # CHANGED: Different transforms for validation (no augmentation)
-        if is_validation:
-            self.transforms = Compose([
-                LoadImaged(keys=["VNC", "MIX"]),
-                EnsureChannelFirstd(keys=["VNC", "MIX"]),
-                ScaleIntensityd(keys=["VNC", "MIX"]),
-                SpatialPadd(keys=["VNC", "MIX"], 
-                           spatial_size=(self.image_size, self.image_size, self.image_size)),
-                EnsureTyped(keys=["VNC", "MIX"]),
-            ])
-        else:
-            self.transforms = Compose([
-                LoadImaged(keys=["VNC", "MIX"]),
-                EnsureChannelFirstd(keys=["VNC", "MIX"]),
-                ScaleIntensityd(keys=["VNC", "MIX"]),
-                RandSpatialCropd(
-                    keys=["VNC", "MIX"],
-                    roi_size=(self.image_size, self.image_size, self.image_size),
-                    random_size=False,
-                    random_center=True
-                ),
-                SpatialPadd(keys=["VNC", "MIX"], 
-                           spatial_size=(self.image_size, self.image_size, self.image_size)),
-                RandRotate90d(keys=["VNC", "MIX"], prob=0.5, spatial_axes=(0, 1)),
-                EnsureTyped(keys=["VNC", "MIX"]),
-            ])
+        # CHANGED: Consistent transforms for training and validation
+        self.transforms = Compose([
+            LoadImaged(keys=["VNC", "MIX"]),
+            EnsureChannelFirstd(keys=["VNC", "MIX"]),
+            ScaleIntensityd(keys=["VNC", "MIX"]),
+            SpatialPadd(keys=["VNC", "MIX"], 
+                       spatial_size=(self.image_size, self.image_size, self.image_size)),
+            # Add cropping to ensure exact size
+            RandSpatialCropd(
+                keys=["VNC", "MIX"],
+                roi_size=(self.image_size, self.image_size, self.image_size),
+                random_size=False,
+                random_center=True
+            ),
+            RandRotate90d(keys=["VNC", "MIX"], prob=0.5, spatial_axes=(0, 1)),
+            EnsureTyped(keys=["VNC", "MIX"]),
+        ])
 
     def get_cache_dataset(self):
         return CacheDataset(
@@ -103,7 +94,7 @@ class NiftiDataset:
             num_workers=hparams["num_workers"]
         )
 
-# CHANGED: Updated WGAN_GP class with validation and image saving
+# Rest of the code remains the same as in the previous script
 class WGAN_GP(pl.LightningModule):
     def __init__(self, hparams):
         super().__init__()
