@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 import pytorch_lightning as pl
 from pytorch_lightning import Trainer
@@ -20,6 +21,8 @@ from monai.transforms import (
     ScaleIntensityd,
     Resized,
     RandRotate90d,
+    RandFlipd,
+    RandGaussianNoised,
     EnsureTyped,
 )
 from monai.data import CacheDataset, DataLoader
@@ -30,17 +33,19 @@ print_config()
 # Updated hyperparameters
 hparams = {
     "learning_rate": 1e-4,
-    "batch_size": 2,  # Kept at 2 as requested
+    "batch_size": 4,  # Increased batch size
     "image_size": 64,
     "channels_img": 1,
     "num_epochs": 500,
-    "features_gen": (8, 16, 32, 64),
-    "critic_iterations": 5,  # Kept original number
+    "features_gen": (4, 8, 16),  # Simplified generator features
+    "critic_iterations": 5,
     "lambda_gp": 10,
     "beta1": 0.0,
     "beta2": 0.9,
     "num_workers": 0,
-    "save_image_interval": 50,
+    "save_image_interval": 10,  # Save images every 10 epochs
+    "alpha": 0.1,  # Reconstruction loss weight
+    "weight_decay": 1e-4,  # Added weight decay
 }
 
 class NiftiDataset:
@@ -66,7 +71,7 @@ class NiftiDataset:
         if not self.data_dicts:
             raise ValueError(f"No {'validation' if is_validation else 'training'} data found.")
 
-        # Updated transforms with resizing and standardization
+        # Updated transforms with additional augmentations
         self.transforms = Compose([
             LoadImaged(keys=["VNC", "MIX"]),
             EnsureChannelFirstd(keys=["VNC", "MIX"]),
@@ -77,6 +82,8 @@ class NiftiDataset:
             ),
             ScaleIntensityd(keys=["VNC", "MIX"]),
             RandRotate90d(keys=["VNC", "MIX"], prob=0.5, spatial_axes=(0, 1)),
+            RandFlipd(keys=["VNC", "MIX"], prob=0.3),  # Random flips
+            RandGaussianNoised(keys=["VNC", "MIX"], prob=0.2, mean=0.0, std=0.1),  # Gaussian noise
             EnsureTyped(keys=["VNC", "MIX"], dtype=torch.float32)
         ])
 
@@ -94,30 +101,30 @@ class WGAN_GP(pl.LightningModule):
         self.save_hyperparameters(hparams)
         self.automatic_optimization = False
         
-        # Refined generator architecture
+        # Simplified generator architecture
         self.generator = UNet(
             spatial_dims=3,
             in_channels=hparams["channels_img"],
             out_channels=hparams["channels_img"],
             channels=hparams["features_gen"],
             strides=(2, 2, 2),
-            num_res_units=2,
+            num_res_units=1,  # Reduced residual units
             kernel_size=3,
             act="PRELU",
             norm="INSTANCE",
-            dropout=0.1,
+            dropout=0.2,  # Increased dropout
         )
         
-        # Slightly refined critic architecture
+        # Simplified critic architecture
         self.critic = DenseNet(
             spatial_dims=3,
             in_channels=hparams["channels_img"],
             out_channels=1,
-            init_features=32,
-            growth_rate=32,
-            block_config=(6, 12),
-            bn_size=3,
-            dropout_prob=0.1,
+            init_features=16,  # Reduced initial features
+            growth_rate=16,
+            block_config=(4, 8),  # Reduced block sizes
+            bn_size=2,
+            dropout_prob=0.2,
         )
 
     def forward(self, x):
@@ -166,27 +173,34 @@ class WGAN_GP(pl.LightningModule):
         # Train Generator
         fake = self.generator(vnc)
         gen_loss = -torch.mean(self.critic(fake))
-        recon_loss = nn.functional.mse_loss(fake, mix)
-        total_gen_loss = gen_loss + recon_loss
+        
+        # L1 loss instead of MSE
+        recon_loss = nn.functional.l1_loss(fake, mix)
+        total_gen_loss = gen_loss + self.hparams["alpha"] * recon_loss
         
         opt_gen.zero_grad()
         self.manual_backward(total_gen_loss)
         opt_gen.step()
         
-        self.log("loss_gen", gen_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-        self.log("recon_loss", recon_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-        self.log("gradient_penalty", gp, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-        
-        # Optional: Log GPU memory metrics
-        self.log("gpu_memory_allocated", torch.cuda.memory_allocated(), prog_bar=True)
+        # Detailed logging
+        self.log_dict({
+            "loss_gen": gen_loss, 
+            "recon_loss": recon_loss, 
+            "total_gen_loss": total_gen_loss,
+            "gradient_penalty": gp, 
+            "lr_gen": opt_gen.param_groups[0]['lr'],
+            "lr_critic": opt_critic.param_groups[0]['lr']
+        }, on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
     def validation_step(self, batch, batch_idx):
         vnc, mix = batch["VNC"].float(), batch["MIX"].float()
         fake = self.generator(vnc)
-        val_recon_loss = nn.functional.mse_loss(fake, mix)
+        
+        # L1 validation loss
+        val_recon_loss = nn.functional.l1_loss(fake, mix)
         self.log("val_recon_loss", val_recon_loss, on_epoch=True)
 
-        # Save validation images
+        # Save validation images every 10 epochs
         if batch_idx == 0 and self.current_epoch % self.hparams["save_image_interval"] == 0:
             self.save_validation_image(vnc[0], mix[0], fake[0], self.current_epoch)
 
@@ -215,13 +229,20 @@ class WGAN_GP(pl.LightningModule):
             self.generator.parameters(),
             lr=self.hparams["learning_rate"],
             betas=(self.hparams["beta1"], self.hparams["beta2"]),
+            weight_decay=self.hparams["weight_decay"]
         )
         opt_critic = optim.Adam(
             self.critic.parameters(),
             lr=self.hparams["learning_rate"],
             betas=(self.hparams["beta1"], self.hparams["beta2"]),
+            weight_decay=self.hparams["weight_decay"]
         )
-        return [opt_gen, opt_critic], []
+        
+        # Learning rate scheduler
+        scheduler_gen = ReduceLROnPlateau(opt_gen, mode='min', factor=0.5, patience=10)
+        scheduler_critic = ReduceLROnPlateau(opt_critic, mode='min', factor=0.5, patience=10)
+        
+        return [opt_gen, opt_critic], [scheduler_gen, scheduler_critic]
 
     def on_train_end(self):
         save_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models")
@@ -271,19 +292,23 @@ if __name__ == "__main__":
 
     # Setup logging and checkpoints
     logger = TensorBoardLogger("tb_logs", name="WGAN_GP")
+    
+    # Checkpoint callback with more detailed saving
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
         dirpath="checkpoints",
-        filename="WGAN_GP-{epoch:02d}-{loss_gen:.2f}",
+        filename="WGAN_GP-{epoch:02d}-{val_recon_loss:.2f}",
         save_top_k=3,
         verbose=True,
-        monitor="loss_gen",
+        monitor="val_recon_loss",
         mode="min",
+        every_n_epochs=50,  # Save every 50 epochs
+        save_on_train_epoch_end=True
     )
 
-    # Early stopping callback
+    # Early stopping callback monitoring validation reconstruction loss
     early_stop_callback = pl.callbacks.EarlyStopping(
-        monitor="loss_gen",
-        patience=20,
+        monitor="val_recon_loss",
+        patience=10,  # Reduced patience
         verbose=True,
         mode="min"
     )
@@ -296,14 +321,15 @@ if __name__ == "__main__":
         accelerator = "cpu"
         devices = 1
 
-    # Configure trainer without mixed precision
+    # Configure trainer with validation frequency
     trainer = Trainer(
         max_epochs=hparams["num_epochs"],
         accelerator=accelerator,
         devices=devices,
         logger=logger,
         callbacks=[checkpoint_callback, early_stop_callback],
-        log_every_n_steps=10
+        log_every_n_steps=10,
+        val_check_interval=0.25  # Validate 4 times per epoch
     )
 
     # Start training
