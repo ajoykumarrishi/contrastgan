@@ -144,43 +144,41 @@ class WGAN_GP(pl.LightningModule):
         return gp
 
     def training_step(self, batch, batch_idx):
-        # Use mixed precision context
-        with torch.cuda.amp.autocast():
-            vnc, mix = batch["VNC"].float(), batch["MIX"].float()
-            opt_gen, opt_critic = self.optimizers()
-            
-            # Train Critic
-            for _ in range(self.hparams["critic_iterations"]):
-                fake = self.generator(vnc)
-                critic_real, critic_fake = self.critic(mix), self.critic(fake.detach())
-                gp = self.gradient_penalty(mix, fake.detach())
-                loss_critic = (
-                    -(torch.mean(critic_real) - torch.mean(critic_fake))
-                    + self.hparams["lambda_gp"] * gp
-                )
-                opt_critic.zero_grad()
-                self.manual_backward(loss_critic)
-                opt_critic.step()
-                torch.cuda.empty_cache()
-                
-            self.log("loss_critic", loss_critic, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-            
-            # Train Generator
+        vnc, mix = batch["VNC"].float(), batch["MIX"].float()
+        opt_gen, opt_critic = self.optimizers()
+        
+        # Train Critic
+        for _ in range(self.hparams["critic_iterations"]):
             fake = self.generator(vnc)
-            gen_loss = -torch.mean(self.critic(fake))
-            recon_loss = nn.functional.mse_loss(fake, mix)
-            total_gen_loss = gen_loss + recon_loss
+            critic_real, critic_fake = self.critic(mix), self.critic(fake.detach())
+            gp = self.gradient_penalty(mix, fake.detach())
+            loss_critic = (
+                -(torch.mean(critic_real) - torch.mean(critic_fake))
+                + self.hparams["lambda_gp"] * gp
+            )
+            opt_critic.zero_grad()
+            self.manual_backward(loss_critic)
+            opt_critic.step()
+            torch.cuda.empty_cache()
             
-            opt_gen.zero_grad()
-            self.manual_backward(total_gen_loss)
-            opt_gen.step()
-            
-            self.log("loss_gen", gen_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-            self.log("recon_loss", recon_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-            self.log("gradient_penalty", gp, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-            
-            # Optional: Log GPU memory metrics
-            self.log("gpu_memory_allocated", torch.cuda.memory_allocated(), prog_bar=True)
+        self.log("loss_critic", loss_critic, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        
+        # Train Generator
+        fake = self.generator(vnc)
+        gen_loss = -torch.mean(self.critic(fake))
+        recon_loss = nn.functional.mse_loss(fake, mix)
+        total_gen_loss = gen_loss + recon_loss
+        
+        opt_gen.zero_grad()
+        self.manual_backward(total_gen_loss)
+        opt_gen.step()
+        
+        self.log("loss_gen", gen_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.log("recon_loss", recon_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.log("gradient_penalty", gp, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        
+        # Optional: Log GPU memory metrics
+        self.log("gpu_memory_allocated", torch.cuda.memory_allocated(), prog_bar=True)
 
     def validation_step(self, batch, batch_idx):
         vnc, mix = batch["VNC"].float(), batch["MIX"].float()
@@ -269,9 +267,6 @@ if __name__ == "__main__":
         num_workers=hparams["num_workers"],
     )
 
-    # Set up PyTorch Lightning configurations
-    torch.set_float32_matmul_precision('medium')
-
     model = WGAN_GP(hparams)
 
     # Setup logging and checkpoints
@@ -301,16 +296,13 @@ if __name__ == "__main__":
         accelerator = "cpu"
         devices = 1
 
-    # Configure trainer with mixed precision and advanced callbacks
+    # Configure trainer without mixed precision
     trainer = Trainer(
         max_epochs=hparams["num_epochs"],
         accelerator=accelerator,
         devices=devices,
-        precision=16,  # Mixed precision training
         logger=logger,
         callbacks=[checkpoint_callback, early_stop_callback],
-        gradient_clip_val=0.5,
-        gradient_clip_algorithm="norm",
         log_every_n_steps=10
     )
 
